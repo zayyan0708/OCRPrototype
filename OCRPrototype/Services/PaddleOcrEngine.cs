@@ -19,12 +19,12 @@ public sealed class PaddleOcrEngine : IDisposable
     // for the exact Arabic member name if this doesn't compile as-is.
     public static async Task<PaddleOcrEngine> CreateAsync()
     {
-        FullOcrModel model = await OnlineFullModels.ArabicV4.DownloadAsync();
+        FullOcrModel model = await OnlineFullModels.ArabicV5.DownloadAsync();
 
-        var ocr = new PaddleOcrAll(model, PaddleDevice.Mkldnn())
+        var ocr = new PaddleOcrAll(model, PaddleDevice.Onnx())
         {
-            AllowRotateDetection = true,
-            Enable180Classification = true,
+            AllowRotateDetection = false,
+            Enable180Classification = false,
         };
         return new PaddleOcrEngine(ocr);
     }

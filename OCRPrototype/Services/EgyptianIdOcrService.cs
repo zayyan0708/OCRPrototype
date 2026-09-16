@@ -19,6 +19,8 @@ public class EgyptianIdOcrService : IEgyptianIdOcrService
         "جمهوريه مصر العربيه",
         "بطاقة تحقيق الشخصية",
         "بطاقه تحقيق الشخصيه",
+        "مَهورزَة مصَ الحعَربيَةُ",
+        "بطاقة غحقيق الشخصية"
     };
 
     public EgyptianIdOcrService(PaddleOcrEngine engine, ILogger<EgyptianIdOcrService> logger)
@@ -39,15 +41,14 @@ public class EgyptianIdOcrService : IEgyptianIdOcrService
         _logger.LogInformation("OCR found {Count} text regions", ocrResult.Regions.Count());
 
         List<string> lines = ocrResult.Regions
-            // Cards are laid out as stacked horizontal lines, so sorting by
-            // the vertical center of each box reconstructs reading order
-            // top-to-bottom without needing anything fancier.
-            .OrderBy(region => region.Rect.Center.Y)
-            .Select(region => ArabicTextHelper.NormalizeDigits(region.Text.Trim()))
-            .Where(text => text.Length > 0)
-            .Where(text => !Boilerplate.Any(phrase => text.Contains(phrase)))
-            .Select(FixDirection)
-            .ToList();
+     .OrderBy(region => region.Rect.Center.Y)
+     .Select(region =>
+         ArabicTextHelper.NormalizeDigits(region.Text.Trim()))
+     .Where(text => text.Length > 0)
+     .Select(FixDirection)
+     .Where(text => !Boilerplate.Any(
+         phrase => text.Contains(phrase, StringComparison.Ordinal)))
+     .ToList();
 
         return new EgyptianIdOcrResult { IdInformations = lines };
     }
