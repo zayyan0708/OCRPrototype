@@ -1,4 +1,4 @@
-using System.Text;
+﻿using System.Text;
 using System.Text.RegularExpressions;
 
 namespace OCRPrototype.Services;
@@ -6,18 +6,16 @@ namespace OCRPrototype.Services;
 public static class ArabicTextHelper
 {
     private static readonly Regex ArabicChar =
-        new(@"[\u0600-\u06FF]", RegexOptions.Compiled);
+        new(
+            @"[\u0600-\u06FF]",
+            RegexOptions.Compiled);
 
-    public static bool ContainsArabic(string text) =>
-        ArabicChar.IsMatch(text);
+    public static bool ContainsArabic(string text)
+    {
+        return !string.IsNullOrWhiteSpace(text)
+               && ArabicChar.IsMatch(text);
+    }
 
-    /// <summary>
-    /// Converts PaddleOCR Arabic recognition from its visual/LTR order
-    /// into logical RTL Arabic order.
-    ///
-    /// This follows PaddleOCR's official pred_reverse behaviour.
-    /// Latin text, numbers and common punctuation are kept together.
-    /// </summary>
     public static string FixReadingOrder(string text)
     {
         if (string.IsNullOrWhiteSpace(text))
@@ -54,7 +52,40 @@ public static class ArabicTextHelper
 
         parts.Reverse();
 
-        return string.Concat(parts);
+        return string.Concat(parts).Trim();
+    }
+
+    public static string NormalizeDigits(string text)
+    {
+        if (string.IsNullOrEmpty(text))
+            return string.Empty;
+
+        var sb = new StringBuilder(text.Length);
+
+        foreach (char c in text)
+        {
+            // Arabic-Indic:
+            // ٠١٢٣٤٥٦٧٨٩
+            if (c is >= '\u0660' and <= '\u0669')
+            {
+                sb.Append(
+                    (char)('0' + (c - '\u0660')));
+            }
+
+            // Eastern Arabic / Persian:
+            // ۰۱۲۳۴۵۶۷۸۹
+            else if (c is >= '\u06F0' and <= '\u06F9')
+            {
+                sb.Append(
+                    (char)('0' + (c - '\u06F0')));
+            }
+            else
+            {
+                sb.Append(c);
+            }
+        }
+
+        return sb.ToString();
     }
 
     private static bool IsLtrGroupCharacter(char c)
@@ -71,20 +102,5 @@ public static class ArabicTextHelper
             c == '%' ||
             c == '+' ||
             c == '-';
-    }
-
-    public static string NormalizeDigits(string text)
-    {
-        var sb = new StringBuilder(text.Length);
-
-        foreach (char c in text)
-        {
-            sb.Append(
-                c is >= '\u0660' and <= '\u0669'
-                    ? (char)(c - '\u0660' + '0')
-                    : c);
-        }
-
-        return sb.ToString();
     }
 }
