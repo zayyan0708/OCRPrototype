@@ -9,7 +9,9 @@ namespace OCRPrototype.Services;
 public sealed class PaddleOcrEngine : IDisposable
 {
     private readonly PaddleOcrAll _ocr;
-    private readonly SemaphoreSlim _lock = new(1, 1);
+
+    private readonly SemaphoreSlim _lock =
+        new(1, 1);
 
     private PaddleOcrEngine(PaddleOcrAll ocr)
     {

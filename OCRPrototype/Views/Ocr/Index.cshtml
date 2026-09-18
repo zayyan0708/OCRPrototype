@@ -1,24 +1,55 @@
 @model OCRPrototype.Models.OcrUploadViewModel
+
 @{
     ViewData["Title"] = "Egyptian ID OCR";
 }
 
-<div class="container py-4" style="max-width: 640px;">
-    <h1 class="h3 mb-3">Egyptian ID Card OCR</h1>
-    <p class="text-muted">Upload a photo of the front of the card. Works best with good lighting and the card filling most of the frame.</p>
+<div class="container py-4"
+     style="max-width: 760px;">
 
-    <form asp-action="Index" method="post" enctype="multipart/form-data" class="mb-4">
+    <h1 class="h3 mb-3">
+        Egyptian ID Card OCR
+    </h1>
+
+    <p class="text-muted">
+        Upload a clear image of the front of an Egyptian ID card.
+    </p>
+
+    <form asp-action="Index"
+          method="post"
+          enctype="multipart/form-data"
+          class="mb-4">
+
         @Html.AntiForgeryToken()
 
         <div class="mb-3">
-            <input type="file" name="IdImage" id="IdImage" class="form-control" accept="image/*" required
+
+            <input type="file"
+                   name="IdImage"
+                   id="IdImage"
+                   class="form-control"
+                   accept="image/*"
+                   required
                    onchange="previewImage(this)" />
-            <span asp-validation-for="IdImage" class="text-danger"></span>
+
+            <span asp-validation-for="IdImage"
+                  class="text-danger">
+            </span>
+
         </div>
 
-        <img id="preview" class="img-fluid rounded border mb-3 d-none" alt="Selected ID preview" />
+        <img id="preview"
+             class="img-fluid rounded border mb-3 d-none"
+             style="max-height: 400px;"
+             alt="Selected ID preview" />
 
-        <button type="submit" class="btn btn-primary">Extract text</button>
+        <div>
+            <button type="submit"
+                    class="btn btn-primary">
+                Extract ID
+            </button>
+        </div>
+
     </form>
 
     @if (!ViewData.ModelState.IsValid)
@@ -28,87 +59,219 @@
         </div>
     }
 
-@if (Model.Result is not null)
-{
+    @if (Model.Result is not null)
+    {
         <hr />
 
-        <h2 class="h5">OCR Result</h2>
+        <h2 class="h5 mb-3">
+            OCR Result
+        </h2>
 
-    @if (!Model.Result.IsSuccess)
-    {
+        @if (!Model.Result.IsSuccess)
+        {
             <div class="alert alert-danger">
-                @Model.Result.ErrorMessage
+
+                <strong>
+                    Image could not be processed.
+                </strong>
+
+                <div>
+                    @Model.Result.ErrorMessage
+                </div>
+
             </div>
-    }
-    else
-    {
-        @if (!string.IsNullOrWhiteSpace(Model.Result.Photo))
-        {
-                <img src="data:image/jpeg;base64,@Model.Result.Photo"
-                     style="max-width: 180px;"
-                     class="img-thumbnail mb-3"
-                     alt="ID photo" />
         }
-
-            <table class="table table-bordered">
-                <tr>
-                    <th>First name</th>
-                    <td dir="rtl">@Model.Result.FirstName</td>
-                </tr>
-
-                <tr>
-                    <th>Full name</th>
-                    <td dir="rtl">@Model.Result.FullName</td>
-                </tr>
-
-                <tr>
-                    <th>Address</th>
-                    <td dir="rtl">@Model.Result.Address</td>
-                </tr>
-
-                <tr>
-                    <th>National ID</th>
-                    <td>@Model.Result.NationalId</td>
-                </tr>
-
-                <tr>
-                    <th>Card ID</th>
-                    <td>@Model.Result.CardId</td>
-                </tr>
-
-                <tr>
-                    <th>Date of birth</th>
-                    <td>@Model.Result.DateOfBirth</td>
-                </tr>
-            </table>
-
-        @if (!string.IsNullOrWhiteSpace(Model.Result.Warning))
+        else
         {
+            @if (!string.IsNullOrWhiteSpace(
+                Model.Result.Warning))
+            {
                 <div class="alert alert-warning">
                     @Model.Result.Warning
                 </div>
+            }
+
+            <div class="row mb-4">
+
+                <div class="col-md-4">
+
+                    @if (!string.IsNullOrWhiteSpace(
+                                Model.Result.Photo))
+                    {
+                        <img src="data:image/jpeg;base64,@Model.Result.Photo"
+                             class="img-thumbnail"
+                             style="max-width: 180px;"
+                             alt="ID portrait" />
+                    }
+
+                </div>
+
+                <div class="col-md-8">
+
+                    <table class="table table-bordered">
+
+                        <tbody>
+
+                            <tr>
+                                <th style="width: 35%;">
+                                    First name
+                                </th>
+
+                                <td dir="rtl">
+                                    @Model.Result.FirstName
+                                </td>
+                            </tr>
+
+                            <tr>
+                                <th>
+                                    Full name
+                                </th>
+
+                                <td dir="rtl">
+                                    @Model.Result.FullName
+                                </td>
+                            </tr>
+
+                            <tr>
+                                <th>
+                                    Address
+                                </th>
+
+                                <td dir="rtl">
+                                    @Model.Result.Address
+                                </td>
+                            </tr>
+
+                            <tr>
+                                <th>
+                                    National ID
+                                </th>
+
+                                <td dir="ltr">
+                                    @Model.Result.NationalId
+                                </td>
+                            </tr>
+
+                            <tr>
+                                <th>
+                                    Card ID
+                                </th>
+
+                                <td dir="ltr">
+                                    @Model.Result.CardId
+                                </td>
+                            </tr>
+
+                            <tr>
+                                <th>
+                                    Date of birth
+                                </th>
+
+                                <td dir="ltr">
+                                    @Model.Result.DateOfBirth
+                                </td>
+                            </tr>
+
+                        </tbody>
+
+                    </table>
+
+                </div>
+
+            </div>
+
+            <h3 class="h6">
+                Image Quality
+            </h3>
+
+            <table class="table table-sm table-bordered mb-4">
+
+                <tbody>
+
+                    <tr>
+                        <th>
+                            Readable
+                        </th>
+
+                        <td>
+                            @Model.Result.Quality.IsReadable
+                        </td>
+                    </tr>
+
+                    <tr>
+                        <th>
+                            Sharpness
+                        </th>
+
+                        <td>
+                            @Model.Result.Quality.Sharpness
+                        </td>
+                    </tr>
+
+                    <tr>
+                        <th>
+                            Brightness
+                        </th>
+
+                        <td>
+                            @Model.Result.Quality.Brightness
+                        </td>
+                    </tr>
+
+                    <tr>
+                        <th>
+                            Contrast
+                        </th>
+
+                        <td>
+                            @Model.Result.Quality.Contrast
+                        </td>
+                    </tr>
+
+                </tbody>
+
+            </table>
+
+            <h3 class="h6">
+                JSON
+            </h3>
+
+            <pre class="bg-light border rounded p-3"
+                 style="direction: ltr; white-space: pre-wrap;">@System.Text.Json.JsonSerializer.Serialize(
+        Model.Result,
+        new System.Text.Json.JsonSerializerOptions
+        {
+                WriteIndented = true,
+                Encoder =
+                        System.Text.Encodings.Web.JavaScriptEncoder
+                                .UnsafeRelaxedJsonEscaping
+        })</pre>
         }
-
-            <pre>@System.Text.Json.JsonSerializer.Serialize(
-                                Model.Result,
-                                new System.Text.Json.JsonSerializerOptions
-                                {
-                                        WriteIndented = true,
-                                        Encoder =
-                                                System.Text.Encodings.Web.JavaScriptEncoder
-                                                        .UnsafeRelaxedJsonEscaping
-                                })</pre>
     }
-}
 
-@section Scripts {
+</div>
+
+@section Scripts
+{
     <script>
         function previewImage(input) {
-            const preview = document.getElementById('preview');
-            if (input.files && input.files[0]) {
-                preview.src = URL.createObjectURL(input.files[0]);
-                preview.classList.remove('d-none');
+
+            const preview =
+                document.getElementById('preview');
+
+            if (!input.files ||
+                !input.files[0]) {
+
+                preview.classList.add('d-none');
+                return;
             }
+
+            preview.src =
+                URL.createObjectURL(
+                    input.files[0]);
+
+            preview.classList.remove(
+                'd-none');
         }
     </script>
 }

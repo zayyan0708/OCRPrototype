@@ -21,7 +21,8 @@ public class OcrController : Controller
     [HttpGet]
     public IActionResult Index()
     {
-        return View(new OcrUploadViewModel());
+        return View(
+            new OcrUploadViewModel());
     }
 
     [HttpPost]
@@ -72,21 +73,47 @@ public class OcrController : Controller
         IFormFile file,
         CancellationToken ct)
     {
-        if (file is null || file.Length == 0)
-            return BadRequest("No image was uploaded.");
+        if (file is null ||
+            file.Length == 0)
+        {
+            return BadRequest(
+                new
+                {
+                    error =
+                        "No image was uploaded."
+                });
+        }
 
-        await using Stream stream =
-            file.OpenReadStream();
+        try
+        {
+            await using Stream stream =
+                file.OpenReadStream();
 
-        EgyptianIdOcrResult result =
-            await _ocrService.ExtractAsync(
-                stream,
-                ct);
+            EgyptianIdOcrResult result =
+                await _ocrService.ExtractAsync(
+                    stream,
+                    ct);
 
-        if (!result.IsSuccess)
-            return UnprocessableEntity(result);
+            if (!result.IsSuccess)
+                return UnprocessableEntity(result);
 
-        return Ok(result);
+            return Ok(result);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(
+                ex,
+                "OCR API failed for {FileName}",
+                file.FileName);
+
+            return StatusCode(
+                StatusCodes.Status500InternalServerError,
+                new
+                {
+                    error =
+                        "The image could not be processed."
+                });
+        }
     }
 
     [ResponseCache(
