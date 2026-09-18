@@ -86,10 +86,23 @@ public sealed class EgyptianIdOcrService(
         ct.ThrowIfCancellationRequested();
         using var card = processor.Prepare(source);
         var regions = new DynamicRegionLocator().Locate(card, worker.Faces, _options.MaxTextRegions);
-        var recognized = new List<RecognizedLine>();
+        // Tesseract's layout detector complements contours, which can merge security artwork
+        // into text or drop a short first name. Preserve the unenhanced pixels as an alternative.
+        ct.ThrowIfCancellationRequested();
+        var recognized = worker.ReadSparse(card.RawGray, false, _options.MaxTextRegions, ct).ToList();
+        ct.ThrowIfCancellationRequested();
+        recognized.AddRange(worker.ReadSparse(card.Gray, false, _options.MaxTextRegions, ct));
+        ct.ThrowIfCancellationRequested();
+        recognized.AddRange(worker.ReadSparse(card.RawGray, true, _options.MaxTextRegions, ct));
         foreach (var region in regions.TextLines)
         {
             ct.ThrowIfCancellationRequested();
+            // Skip contour retries when sparse detection already read this row confidently.
+            if (recognized.Any(l => l.Confidence >= _options.MinTextConfidence
+                && Math.Abs(l.Bounds.Y + l.Bounds.Height / 2d - region.Y - region.Height / 2d)
+                    < Math.Max(l.Bounds.Height, region.Height) * .5
+                && l.Bounds.X <= region.X + region.Width * .2 && l.Bounds.Right >= region.Right - region.Width * .2))
+                continue;
             var line = worker.Read(card.Gray, region);
             if (line.Confidence < _options.MinTextConfidence)
             {

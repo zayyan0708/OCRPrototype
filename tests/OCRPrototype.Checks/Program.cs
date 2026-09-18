@@ -43,6 +43,16 @@ Check(FrontCardParser.TryPrintedDate("٢٩/٢/٢٠٠٠", today, out var printed)
 lines.Add(Line(460,"1/1/2001"));
 Check(!parser.Parse(lines,null,today).Complete && parser.Parse(lines,null,today).Data.DateOfBirth is null, "Conflicting DOB needs review");
 lines.RemoveAt(lines.Count - 1);
+var withoutId = lines.Where(l => l.Text != "30002290112345").ToList();
+var partial = parser.Parse(withoutId,new Rect(10,80,200,270),today);
+Check(partial.Data.FullName == "أَحمد محمد علي" && partial.Data.Address is not null
+    && partial.Data.NationalId is null && !partial.Complete, "Readable fields survive missing national ID");
+withoutId.Add(Line(410,"70002290112345"));
+Check(parser.Parse(withoutId,null,today).Data.FullName is not null, "Invalid ID cannot suppress readable name");
+withoutId.Add(Line(170,"محمد علي"));
+Check(parser.Parse(withoutId,null,today).Data.Address is not null, "Duplicate OCR passes do not shift fields");
+withoutId.Add(new RecognizedLine(new Rect(50,350,70,30), "نص زائد", 80));
+Check(parser.Parse(withoutId,null,today).Data.Address is not null, "Unaligned artwork does not suppress fields");
 lines.Add(Line(410,"30101010112345"));
 Check(parser.Parse(lines,null,today).Data.NationalId is null, "Conflicting plausible IDs stay null");
 var result = new OcrExtractionResult(false,0,null,null,"Unreadable");
@@ -74,6 +84,8 @@ if (args.Contains("--native"))
         Cv2.PutText(textImage,"AB1234567",new Point(30,100),HersheyFonts.HersheySimplex,2,Scalar.Black,3);
         var read = worker.Read(textImage,new Rect(0,0,900,160),true);
         Check(read.Text == "AB1234567", "Native Tesseract and OpenCV integration");
+        Check(worker.ReadSparse(textImage,true,24,default).Any(l => l.Text == "AB1234567"),
+            "Native sparse layout returns text and bounding boxes");
     }
     finally { pool.Return(worker); }
     using var canceled = new CancellationTokenSource(); canceled.Cancel();

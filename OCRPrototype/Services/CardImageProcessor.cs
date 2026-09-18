@@ -3,12 +3,13 @@ using OpenCvSharp;
 
 namespace OCRPrototype.Services;
 
-public sealed class PreparedCard(Mat color, Mat gray, Mat binary) : IDisposable
+public sealed class PreparedCard(Mat color, Mat gray, Mat binary, Mat rawGray) : IDisposable
 {
+    public Mat RawGray { get; } = rawGray;
     public Mat Color { get; } = color;
     public Mat Gray { get; } = gray;
     public Mat Binary { get; } = binary;
-    public void Dispose() { Binary.Dispose(); Gray.Dispose(); Color.Dispose(); }
+    public void Dispose() { Binary.Dispose(); Gray.Dispose(); RawGray.Dispose(); Color.Dispose(); }
 }
 
 public sealed class CardImageProcessor(OcrOptions options)
@@ -39,7 +40,7 @@ public sealed class CardImageProcessor(OcrOptions options)
 
     public PreparedCard Prepare(Mat source)
     {
-        var color = new Mat(); var gray = new Mat(); var binary = new Mat();
+        var color = new Mat(); var gray = new Mat(); var binary = new Mat(); var rawGray = new Mat();
         try
         {
             // Contract: upright front, card only. Canonical physical card ratio corrects stretched scans.
@@ -62,6 +63,7 @@ public sealed class CardImageProcessor(OcrOptions options)
                 rotated.CopyTo(color);
                 Cv2.CvtColor(color, gray, ColorConversionCodes.BGR2GRAY);
             }
+            gray.CopyTo(rawGray);
             // Mild bilateral smoothing retains Arabic dots and marks; no erosion of the OCR image.
             using var denoised = new Mat();
             Cv2.BilateralFilter(gray, denoised, 5, 25, 25);
@@ -69,8 +71,8 @@ public sealed class CardImageProcessor(OcrOptions options)
             clahe.Apply(denoised, gray);
             Cv2.AdaptiveThreshold(gray, binary, 255, AdaptiveThresholdTypes.GaussianC,
                 ThresholdTypes.Binary, 41, 13);
-            return new(color, gray, binary);
+            return new(color, gray, binary, rawGray);
         }
-        catch { color.Dispose(); gray.Dispose(); binary.Dispose(); throw; }
+        catch { color.Dispose(); gray.Dispose(); binary.Dispose(); rawGray.Dispose(); throw; }
     }
 }

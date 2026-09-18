@@ -45,5 +45,25 @@ public sealed class TesseractWorker : IDisposable
         return new(roi, ArabicTextHelper.Normalize(page.GetText()), page.GetMeanConfidence() * 100);
     }
 
+    public IReadOnlyList<RecognizedLine> ReadSparse(Mat image, bool latin, int limit, CancellationToken ct)
+    {
+        Cv2.ImEncode(".png", image, out byte[] bytes);
+        using var pix = Pix.LoadFromMemory(bytes);
+        using var page = (latin ? _latin : _arabic).Process(pix, PageSegMode.SparseText);
+        using var iterator = page.GetIterator();
+        var lines = new List<RecognizedLine>();
+        iterator.Begin();
+        do
+        {
+            ct.ThrowIfCancellationRequested();
+            if (!iterator.TryGetBoundingBox(PageIteratorLevel.TextLine, out var box)) continue;
+            string text = ArabicTextHelper.Normalize(iterator.GetText(PageIteratorLevel.TextLine) ?? "");
+            if (text.Length == 0) continue;
+            lines.Add(new(new CvRect(box.X1, box.Y1, box.Width, box.Height), text,
+                iterator.GetConfidence(PageIteratorLevel.TextLine)));
+        } while (iterator.Next(PageIteratorLevel.TextLine));
+        return lines.OrderByDescending(l => l.Confidence).Take(limit).OrderBy(l => l.Bounds.Y).ToArray();
+    }
+
     public void Dispose() { Faces.Dispose(); _latin.Dispose(); _arabic.Dispose(); }
 }

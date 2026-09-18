@@ -38,19 +38,44 @@ public sealed partial class FrontCardParser(OcrOptions options)
         var candidates = lines.Where(l => l.Confidence >= options.MinTextConfidence
                 && ArabicTextHelper.HasArabicLetters(l.Text) && !ArabicTextHelper.IsHeader(l.Text)
                 && l.Bounds.Y >= top && l.Bounds.Bottom < bottom
+                && l.Text.Count(c => c is >= '\u0621' and <= '\u064a' && char.IsLetter(c)) >= 3
                 && (photo is null || l.Bounds.X > photo.Value.X + photo.Value.Width / 2))
             .OrderBy(l => l.Bounds.Y).ToList();
+        // Multiple preprocessing passes can recognize the same row. Keep the most confident
+        // complete alternative; never append duplicate rows or shift fields around a rejected ID.
+        var unique = new List<RecognizedLine>();
+        foreach (var candidate in candidates.OrderByDescending(l => l.Confidence))
+        {
+            if (unique.Any(l => SameRow(l.Bounds, candidate.Bounds))) continue;
+            unique.Add(candidate);
+        }
+        // Personal Arabic rows share a right edge. Security artwork elsewhere must not
+        // inflate the row count and suppress the real text block.
+        candidates = unique.Select(anchor => unique.Where(l =>
+                Math.Abs(l.Bounds.Right - anchor.Bounds.Right) <= Math.Max(l.Bounds.Height, anchor.Bounds.Height) * 1.5)
+            .OrderBy(l => l.Bounds.Y).ToList())
+            .Where(group => group.Count is 3 or 4)
+            .OrderByDescending(group => group.Sum(l => l.Confidence)).FirstOrDefault() ?? [];
         string? name = null, address = null;
-        if (top >= 0 && nationalId is not null && candidates.Count is 3 or 4)
+        if (top >= 0 && candidates.Count is 3 or 4)
         {
             name = string.Join(" ", candidates.Take(2).Select(l => l.Text));
             address = string.Join("، ", candidates.Skip(2).Select(l => l.Text));
         }
         var data = new ExtractedCardData(name, address, nationalId, cardId, dob);
         bool complete = name is not null && address is not null && nationalId is not null && cardId is not null && dob is not null && !dateConflict;
-        return new(data, complete, complete ? null :
-            "Some front-side fields are missing, low-confidence, or ambiguous. Review the partial result or retake the card.");
+        var missing = new List<string>();
+        if (name is null) missing.Add("FullName (layout or recognition uncertain)");
+        if (address is null) missing.Add("Address (layout or recognition uncertain)");
+        if (nationalId is null) missing.Add("NationalId (not recognized, invalid structure, or conflicting readings)");
+        if (cardId is null) missing.Add("CardId (not recognized or conflicting readings)");
+        if (dob is null) missing.Add("DateOfBirth (no valid source or conflicting dates)");
+        return new(data, complete, complete ? null : "Partial extraction. Review: " + string.Join("; ", missing) + ".");
     }
+
+    private static bool SameRow(Rect a, Rect b) =>
+        Math.Abs(a.Y + a.Height / 2d - b.Y - b.Height / 2d) < Math.Max(a.Height, b.Height) * .6
+        && Math.Min(a.Right, b.Right) > Math.Max(a.X, b.X);
 
     public static string CompactNumber(string text)
     {
