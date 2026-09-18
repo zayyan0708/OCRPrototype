@@ -1,0 +1,24 @@
+name: Front OCR checks
+on:
+  pull_request:
+    branches: [staging]
+  push:
+    branches: [codex/tesseract-front-pipeline]
+permissions:
+  contents: read
+jobs:
+  windows-native:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+      - name: Install pinned OCR models
+        shell: pwsh
+        run: ./scripts/setup-models.ps1
+      - name: Build application and checks
+        run: dotnet build tests/OCRPrototype.Checks/OCRPrototype.Checks.csproj -c Release
+      - name: Run parser, serialization, validation and native smoke checks
+        run: dotnet run --project tests/OCRPrototype.Checks -c Release --no-build -- --native

@@ -1,69 +1,56 @@
+using System.Diagnostics;
+using System.Text.Json;
 using Microsoft.AspNetCore.Mvc;
 using OCRPrototype.Models;
 using OCRPrototype.Services;
-using System.Diagnostics;
-using System.Diagnostics;   // ADD to the top using block
+
 namespace OCRPrototype.Controllers;
 
-public class OcrController : Controller
+public sealed class OcrController(IEgyptianIdOcrService service) : Controller
 {
-    private readonly IEgyptianIdOcrService _ocrService;
-    private readonly ILogger<OcrController> _logger;
-
-    public OcrController(IEgyptianIdOcrService ocrService, ILogger<OcrController> logger)
-    {
-        _ocrService = ocrService;
-        _logger = logger;
-    }
-
     [HttpGet]
     public IActionResult Index() => View(new OcrUploadViewModel());
 
-    [HttpPost]
-    [ValidateAntiForgeryToken]
-    [RequestSizeLimit(10_000_000)] // 10 MB, plenty for a phone photo of a card
+    [HttpPost, ValidateAntiForgeryToken, RequestSizeLimit(10_000_000)]
     public async Task<IActionResult> Index(OcrUploadViewModel model, CancellationToken ct)
     {
         if (model.IdImage is null || model.IdImage.Length == 0)
         {
-            ModelState.AddModelError(nameof(model.IdImage), "Choose an image of the ID card first.");
+            ModelState.AddModelError(nameof(model.IdImage), "Choose a JPEG or PNG of the card front.");
             return View(model);
         }
-
-        try
-        {
-            await using Stream stream = model.IdImage.OpenReadStream();
-            model.Result = await _ocrService.ExtractAsync(stream, ct);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "OCR extraction failed for {FileName}", model.IdImage.FileName);
-            ModelState.AddModelError(string.Empty, "Couldn't read that image - try a clearer, well-lit photo of the full card.");
-        }
-
+        await using var stream = model.IdImage.OpenReadStream();
+        model.Result = (await service.ExtractAsync(stream, ct)).Result;
         return View(model);
     }
 
-    /// <summary>
-    /// Plain JSON endpoint, for calling from JS (see the upload page) or
-    /// from another service instead of going through the HTML form.
-    /// </summary>
-    [HttpPost("api/ocr/id-card")]
-    [RequestSizeLimit(10_000_000)]
-    public async Task<IActionResult> ExtractApi(IFormFile file, CancellationToken ct)
+    [HttpPost("api/ocr/id-card"), RequestSizeLimit(10_000_000)]
+    [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
+    public async Task ExtractApi(IFormFile? file, CancellationToken ct)
     {
+        PipelineResult outcome;
         if (file is null || file.Length == 0)
-            return BadRequest("No file was uploaded.");
-
-        await using Stream stream = file.OpenReadStream();
-        EgyptianIdOcrResult result = await _ocrService.ExtractAsync(stream, ct);
-        return Json(result);
+            outcome = EgyptianIdOcrService.Fail(OcrFailure.InvalidImage, "No file was uploaded.");
+        else
+        {
+            await using var stream = file.OpenReadStream();
+            outcome = await service.ExtractAsync(stream, ct);
+        }
+        Response.StatusCode = outcome.Failure switch
+        {
+            OcrFailure.None => 200,
+            OcrFailure.InvalidImage => 400,
+            OcrFailure.Busy => 429,
+            OcrFailure.Unavailable => 503,
+            _ => 422
+        };
+        if (outcome.Failure == OcrFailure.Busy) Response.Headers.RetryAfter = "2";
+        Response.ContentType = "application/json; charset=utf-8";
+        await JsonSerializer.SerializeAsync(Response.Body, outcome.Result,
+            OcrJsonContext.Default.OcrExtractionResult, ct);
     }
 
-
-[ResponseCache(Duration = 0, Location = ResponseCacheLocation.None, NoStore = true)]
-public IActionResult Error()
-{
-    return View(new ErrorViewModel { RequestId = Activity.Current?.Id ?? HttpContext.TraceIdentifier });
-}
+    [ResponseCache(Duration = 0, Location = ResponseCacheLocation.None, NoStore = true)]
+    public IActionResult Error() => View(new ErrorViewModel
+    { RequestId = Activity.Current?.Id ?? HttpContext.TraceIdentifier });
 }

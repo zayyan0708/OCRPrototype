@@ -361,3 +361,7 @@ MigrationBackup/
 
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
+# OCR runtime assets and sensitive generated portraits
+**/tessdata/*.traineddata
+**/models/*.xml
+**/App_Data/
