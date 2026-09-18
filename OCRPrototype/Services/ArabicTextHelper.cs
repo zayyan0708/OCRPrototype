@@ -5,86 +5,90 @@ namespace OCRPrototype.Services;
 
 public static class ArabicTextHelper
 {
-    private static readonly Regex ArabicChar =
+    private static readonly Regex ArabicRegex =
         new(@"[\u0600-\u06FF]", RegexOptions.Compiled);
 
-    public static bool ContainsArabic(string text) =>
-        ArabicChar.IsMatch(text);
+    public static bool ContainsArabic(string text)
+    {
+        return !string.IsNullOrWhiteSpace(text) &&
+               ArabicRegex.IsMatch(text);
+    }
 
-    /// <summary>
-    /// Converts PaddleOCR Arabic recognition from its visual/LTR order
-    /// into logical RTL Arabic order.
-    ///
-    /// This follows PaddleOCR's official pred_reverse behaviour.
-    /// Latin text, numbers and common punctuation are kept together.
-    /// </summary>
-    public static string FixReadingOrder(string text)
+    public static string Clean(string? text)
     {
         if (string.IsNullOrWhiteSpace(text))
             return string.Empty;
 
-        text = text.Trim();
+        text = NormalizeDigits(text.Trim());
 
-        if (!ContainsArabic(text))
-            return text;
+        if (ContainsArabic(text))
+            text = FixReadingOrder(text);
 
-        var parts = new List<string>();
-        var current = new StringBuilder();
+        return Regex.Replace(text, @"\s+", " ").Trim();
+    }
+
+    public static string NormalizeDigits(string text)
+    {
+        var result = new StringBuilder(text.Length);
 
         foreach (char c in text)
         {
-            if (IsLtrGroupCharacter(c))
+            if (c >= '\u0660' && c <= '\u0669')
             {
-                current.Append(c);
+                result.Append((char)(c - '\u0660' + '0'));
+            }
+            else if (c >= '\u06F0' && c <= '\u06F9')
+            {
+                result.Append((char)(c - '\u06F0' + '0'));
             }
             else
             {
-                if (current.Length > 0)
+                result.Append(c);
+            }
+        }
+
+        return result.ToString();
+    }
+
+    private static string FixReadingOrder(string text)
+    {
+        var parts = new List<string>();
+        var ltrPart = new StringBuilder();
+
+        foreach (char c in text)
+        {
+            if (IsLtrCharacter(c))
+            {
+                ltrPart.Append(c);
+            }
+            else
+            {
+                if (ltrPart.Length > 0)
                 {
-                    parts.Add(current.ToString());
-                    current.Clear();
+                    parts.Add(ltrPart.ToString());
+                    ltrPart.Clear();
                 }
 
                 parts.Add(c.ToString());
             }
         }
 
-        if (current.Length > 0)
-            parts.Add(current.ToString());
+        if (ltrPart.Length > 0)
+            parts.Add(ltrPart.ToString());
 
         parts.Reverse();
 
         return string.Concat(parts);
     }
 
-    private static bool IsLtrGroupCharacter(char c)
+    private static bool IsLtrCharacter(char c)
     {
-        return
-            (c >= 'a' && c <= 'z') ||
-            (c >= 'A' && c <= 'Z') ||
-            (c >= '0' && c <= '9') ||
-            c == ' ' ||
-            c == ':' ||
-            c == '*' ||
-            c == '.' ||
-            c == '/' ||
-            c == '%' ||
-            c == '+' ||
-            c == '-';
-    }
-
-    public static string NormalizeDigits(string text)
-    {
-        var sb = new StringBuilder(text.Length);
-
-        foreach (char c in text)
-        {
-            sb.Append(
-                c is >= '\u0660' and <= '\u0669'
-                    ? (char)(c - '\u0660' + '0')
-                    : c);
-        }
-
-        return sb.ToString();
+        return char.IsDigit(c) ||
+               (c >= 'a' && c <= 'z') ||
+               (c >= 'A' && c <= 'Z') ||
+               c == '/' ||
+               c == '-' ||
+               c == '.' ||
+               c == ':';
     }
 }

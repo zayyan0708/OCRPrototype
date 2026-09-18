@@ -28,33 +28,78 @@
         </div>
     }
 
-    @if (Model.Result is not null)
+@if (Model.Result is not null)
+{
+        <hr />
+
+        <h2 class="h5">OCR Result</h2>
+
+    @if (!Model.Result.IsSuccess)
     {
-        <h2 class="h5">Result</h2>
-
-        @if (Model.Result.IdInformations.Count == 0)
-        {
-            <p class="text-muted">No text was detected - try a sharper photo.</p>
-        }
-        else
-        {
-            <ul class="list-group mb-3">
-                @foreach (string line in Model.Result.IdInformations)
-                {
-                    <li class="list-group-item" dir="auto">@line</li>
-                }
-            </ul>
-        }
-
-        <pre class="bg-light border rounded p-3" style="direction: ltr;">@System.Text.Json.JsonSerializer.Serialize(
-            Model.Result,
-            new System.Text.Json.JsonSerializerOptions
-            {
-                WriteIndented = true,
-                Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
-            })</pre>
+            <div class="alert alert-danger">
+                @Model.Result.ErrorMessage
+            </div>
     }
-</div>
+    else
+    {
+        @if (!string.IsNullOrWhiteSpace(Model.Result.Photo))
+        {
+                <img src="data:image/jpeg;base64,@Model.Result.Photo"
+                     style="max-width: 180px;"
+                     class="img-thumbnail mb-3"
+                     alt="ID photo" />
+        }
+
+            <table class="table table-bordered">
+                <tr>
+                    <th>First name</th>
+                    <td dir="rtl">@Model.Result.FirstName</td>
+                </tr>
+
+                <tr>
+                    <th>Full name</th>
+                    <td dir="rtl">@Model.Result.FullName</td>
+                </tr>
+
+                <tr>
+                    <th>Address</th>
+                    <td dir="rtl">@Model.Result.Address</td>
+                </tr>
+
+                <tr>
+                    <th>National ID</th>
+                    <td>@Model.Result.NationalId</td>
+                </tr>
+
+                <tr>
+                    <th>Card ID</th>
+                    <td>@Model.Result.CardId</td>
+                </tr>
+
+                <tr>
+                    <th>Date of birth</th>
+                    <td>@Model.Result.DateOfBirth</td>
+                </tr>
+            </table>
+
+        @if (!string.IsNullOrWhiteSpace(Model.Result.Warning))
+        {
+                <div class="alert alert-warning">
+                    @Model.Result.Warning
+                </div>
+        }
+
+            <pre>@System.Text.Json.JsonSerializer.Serialize(
+                                Model.Result,
+                                new System.Text.Json.JsonSerializerOptions
+                                {
+                                        WriteIndented = true,
+                                        Encoder =
+                                                System.Text.Encodings.Web.JavaScriptEncoder
+                                                        .UnsafeRelaxedJsonEscaping
+                                })</pre>
+    }
+}
 
 @section Scripts {
     <script>
