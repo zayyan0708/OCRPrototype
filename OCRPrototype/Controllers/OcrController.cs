@@ -10,9 +10,7 @@ public class OcrController : Controller
     private readonly IEgyptianIdOcrService _ocrService;
     private readonly ILogger<OcrController> _logger;
 
-    public OcrController(
-        IEgyptianIdOcrService ocrService,
-        ILogger<OcrController> logger)
+    public OcrController(IEgyptianIdOcrService ocrService,ILogger<OcrController> logger)
     {
         _ocrService = ocrService;
         _logger = logger;
@@ -21,19 +19,15 @@ public class OcrController : Controller
     [HttpGet]
     public IActionResult Index()
     {
-        return View(
-            new OcrUploadViewModel());
+        return View(new OcrUploadViewModel());
     }
 
     [HttpPost]
     [ValidateAntiForgeryToken]
     [RequestSizeLimit(10_000_000)]
-    public async Task<IActionResult> Index(
-        OcrUploadViewModel model,
-        CancellationToken ct)
+    public async Task<IActionResult> Index(OcrUploadViewModel model,CancellationToken ct)
     {
-        if (model.IdImage is null ||
-            model.IdImage.Length == 0)
+        if (model.IdImage is null ||model.IdImage.Length == 0)
         {
             ModelState.AddModelError(
                 nameof(model.IdImage),
@@ -44,13 +38,9 @@ public class OcrController : Controller
 
         try
         {
-            await using Stream stream =
-                model.IdImage.OpenReadStream();
+            await using Stream stream =model.IdImage.OpenReadStream();
 
-            model.Result =
-                await _ocrService.ExtractAsync(
-                    stream,
-                    ct);
+            model.Result =await _ocrService.ExtractAsync(stream, ct);
         }
         catch (Exception ex)
         {
@@ -86,13 +76,9 @@ public class OcrController : Controller
 
         try
         {
-            await using Stream stream =
-                file.OpenReadStream();
+            await using Stream stream =file.OpenReadStream();
 
-            EgyptianIdOcrResult result =
-                await _ocrService.ExtractAsync(
-                    stream,
-                    ct);
+            EgyptianIdOcrResult result =await _ocrService.ExtractAsync(stream, ct);
 
             if (!result.IsSuccess)
                 return UnprocessableEntity(result);

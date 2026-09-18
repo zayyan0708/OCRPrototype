@@ -1,24 +1,14 @@
 using OCRPrototype.Services;
 
-var builder =
-    WebApplication.CreateBuilder(args);
+var builder = WebApplication.CreateBuilder(args);
 
-builder.Services
-    .AddControllersWithViews();
+builder.Services.AddControllersWithViews();
 
-builder.Services.AddSingleton(
-    sp =>
-        PaddleOcrEngine
-            .CreateAsync()
-            .GetAwaiter()
-            .GetResult());
+builder.Services.AddSingleton(sp => PaddleOcrEngine.CreateAsync().GetAwaiter().GetResult());
 
-builder.Services.AddScoped<
-    IEgyptianIdOcrService,
-    EgyptianIdOcrService>();
+builder.Services.AddScoped<IEgyptianIdOcrService,EgyptianIdOcrService>();
 
-var app =
-    builder.Build();
+var app =builder.Build();
 
 if (!app.Environment.IsDevelopment())
 {
