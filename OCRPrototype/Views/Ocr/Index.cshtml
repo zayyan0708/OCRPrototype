@@ -1,69 +1,30 @@
 @model OCRPrototype.Models.OcrUploadViewModel
-@{
-    ViewData["Title"] = "Egyptian ID OCR";
-}
-
-<div class="container py-4" style="max-width: 640px;">
-    <h1 class="h3 mb-3">Egyptian ID Card OCR</h1>
-    <p class="text-muted">Upload a photo of the front of the card. Works best with good lighting and the card filling most of the frame.</p>
-
-    <form asp-action="Index" method="post" enctype="multipart/form-data" class="mb-4">
+@using System.Text.Json
+@using OCRPrototype.Models
+@{ ViewData["Title"] = "Egyptian ID front OCR"; }
+<div class="container py-4" style="max-width: 800px">
+    <h1 class="h3">Egyptian ID front OCR</h1>
+    <p>Upload an upright JPEG or PNG, cropped to the card edges. Use even lighting and keep every field visible.</p>
+    <form asp-action="Index" method="post" enctype="multipart/form-data">
         @Html.AntiForgeryToken()
-
-        <div class="mb-3">
-            <input type="file" name="IdImage" id="IdImage" class="form-control" accept="image/*" required
-                   onchange="previewImage(this)" />
-            <span asp-validation-for="IdImage" class="text-danger"></span>
-        </div>
-
-        <img id="preview" class="img-fluid rounded border mb-3 d-none" alt="Selected ID preview" />
-
-        <button type="submit" class="btn btn-primary">Extract text</button>
+        <input asp-for="IdImage" type="file" accept="image/jpeg,image/png" class="form-control mb-3" required />
+        <div asp-validation-summary="All" class="text-danger"></div>
+        <button class="btn btn-primary" type="submit">Extract front</button>
     </form>
-
-    @if (!ViewData.ModelState.IsValid)
+    @if (Model.Result is { } result)
     {
-        <div class="alert alert-danger">
-            <div asp-validation-summary="All"></div>
-        </div>
-    }
-
-    @if (Model.Result is not null)
-    {
-        <h2 class="h5">Result</h2>
-
-        @if (Model.Result.IdInformations.Count == 0)
+        <h2 class="h5 mt-4">@(result.IsSuccess ? "Extracted fields" : "Needs review")</h2>
+        @if (result.ErrorMessage is { } error) { <p class="text-danger">@error</p> }
+        @if (result.Data is { } data)
         {
-            <p class="text-muted">No text was detected - try a sharper photo.</p>
+            <dl>
+                <dt>Full name</dt><dd dir="auto">@data.FullName</dd>
+                <dt>Address</dt><dd dir="auto">@data.Address</dd>
+                <dt>National ID</dt><dd dir="ltr">@data.NationalId</dd>
+                <dt>Card ID</dt><dd dir="ltr">@data.CardId</dd>
+                <dt>Date of birth (from national ID)</dt><dd>@data.DateOfBirth?.ToString("yyyy-MM-dd")</dd>
+            </dl>
         }
-        else
-        {
-            <ul class="list-group mb-3">
-                @foreach (string line in Model.Result.IdInformations)
-                {
-                    <li class="list-group-item" dir="auto">@line</li>
-                }
-            </ul>
-        }
-
-        <pre class="bg-light border rounded p-3" style="direction: ltr;">@System.Text.Json.JsonSerializer.Serialize(
-            Model.Result,
-            new System.Text.Json.JsonSerializerOptions
-            {
-                WriteIndented = true,
-                Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
-            })</pre>
+        <pre class="bg-light p-3" dir="ltr">@JsonSerializer.Serialize(result, OcrJsonContext.Default.OcrExtractionResult)</pre>
     }
 </div>
-
-@section Scripts {
-    <script>
-        function previewImage(input) {
-            const preview = document.getElementById('preview');
-            if (input.files && input.files[0]) {
-                preview.src = URL.createObjectURL(input.files[0]);
-                preview.classList.remove('d-none');
-            }
-        }
-    </script>
-}

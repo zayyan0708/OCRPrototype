@@ -4,5 +4,5 @@ namespace OCRPrototype.Services;
 
 public interface IEgyptianIdOcrService
 {
-    Task<EgyptianIdOcrResult> ExtractAsync(Stream imageStream, CancellationToken ct = default);
+    Task<PipelineResult> ExtractAsync(Stream imageStream, CancellationToken ct = default);
 }

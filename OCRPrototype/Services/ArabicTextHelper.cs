@@ -1,90 +1,40 @@
+using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
 
 namespace OCRPrototype.Services;
 
-public static class ArabicTextHelper
+public static partial class ArabicTextHelper
 {
-    private static readonly Regex ArabicChar =
-        new(@"[\u0600-\u06FF]", RegexOptions.Compiled);
-
-    public static bool ContainsArabic(string text) =>
-        ArabicChar.IsMatch(text);
-
-    /// <summary>
-    /// Converts PaddleOCR Arabic recognition from its visual/LTR order
-    /// into logical RTL Arabic order.
-    ///
-    /// This follows PaddleOCR's official pred_reverse behaviour.
-    /// Latin text, numbers and common punctuation are kept together.
-    /// </summary>
-    public static string FixReadingOrder(string text)
+    // Tesseract returns logical Unicode. Reversing Arabic corrupts numbers and combining marks.
+    public static string Normalize(string text)
     {
-        if (string.IsNullOrWhiteSpace(text))
-            return string.Empty;
-
-        text = text.Trim();
-
-        if (!ContainsArabic(text))
-            return text;
-
-        var parts = new List<string>();
-        var current = new StringBuilder();
-
-        foreach (char c in text)
+        var b = new StringBuilder(text.Length);
+        foreach (char c in text.Normalize(NormalizationForm.FormC))
         {
-            if (IsLtrGroupCharacter(c))
+            if (CharUnicodeInfo.GetUnicodeCategory(c) == UnicodeCategory.Format) continue;
+            b.Append(c switch
             {
-                current.Append(c);
-            }
-            else
-            {
-                if (current.Length > 0)
-                {
-                    parts.Add(current.ToString());
-                    current.Clear();
-                }
-
-                parts.Add(c.ToString());
-            }
+                >= '\u0660' and <= '\u0669' => (char)('0' + c - '\u0660'),
+                >= '\u06f0' and <= '\u06f9' => (char)('0' + c - '\u06f0'),
+                _ => c
+            });
         }
-
-        if (current.Length > 0)
-            parts.Add(current.ToString());
-
-        parts.Reverse();
-
-        return string.Concat(parts);
+        return Whitespace().Replace(b.ToString(), " ").Trim();
     }
 
-    private static bool IsLtrGroupCharacter(char c)
+    // Used only for matching labels. Returned names retain their diacritics.
+    public static string MatchKey(string text) => string.Concat(Normalize(text)
+        .Where(c => CharUnicodeInfo.GetUnicodeCategory(c) != UnicodeCategory.NonSpacingMark && c != '\u0640'))
+        .Replace('أ', 'ا').Replace('إ', 'ا').Replace('آ', 'ا').Replace('ة', 'ه');
+
+    public static bool IsHeader(string text)
     {
-        return
-            (c >= 'a' && c <= 'z') ||
-            (c >= 'A' && c <= 'Z') ||
-            (c >= '0' && c <= '9') ||
-            c == ' ' ||
-            c == ':' ||
-            c == '*' ||
-            c == '.' ||
-            c == '/' ||
-            c == '%' ||
-            c == '+' ||
-            c == '-';
+        string key = MatchKey(text);
+        return key.Contains("جمهوري") || key.Contains("بطاقه") || key.Contains("تحقيق الشخص")
+            || key.Contains("الرقم القوم") || key.Contains("تاريخ الميلاد") || key.Contains("رقم المصنع");
     }
 
-    public static string NormalizeDigits(string text)
-    {
-        var sb = new StringBuilder(text.Length);
-
-        foreach (char c in text)
-        {
-            sb.Append(
-                c is >= '\u0660' and <= '\u0669'
-                    ? (char)(c - '\u0660' + '0')
-                    : c);
-        }
-
-        return sb.ToString();
-    }
+    public static bool HasArabicLetters(string text) => text.Any(c => c is >= '\u0621' and <= '\u064a' && char.IsLetter(c));
+    [GeneratedRegex(@"\s+")] private static partial Regex Whitespace();
 }
