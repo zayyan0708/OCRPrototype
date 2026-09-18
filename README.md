@@ -70,7 +70,7 @@ dotnet run --project tests/OCRPrototype.Checks -c Release -- --native
 
 Checks cover digit/RTL normalization, diacritics, invalid/future/leap dates, conflicting IDs, anchor-based field mapping, corrupt headers, generated JSON round-tripping, overload admission, cancellation, blank-image rejection and a native Latin OCR smoke test. The native flag requires the model setup script and Windows x64. GitHub Actions runs the native checks on Windows.
 
-The authoring environment did not have the .NET SDK and could not reach SDK/NuGet download endpoints. Compilation and these .NET checks have therefore **not been run locally**. Sample images were inspected visually, but Arabic extraction accuracy and latency have **not been measured**. CI is the build/native gate; an actual labeled Arabic regression corpus remains necessary before production use. No claim of perfect extraction or a specific latency is made.
+The authoring environment did not have the .NET SDK and could not reach SDK/NuGet download endpoints. Compilation and these .NET checks have therefore **not been run locally**. Sample images were inspected visually, but Arabic extraction accuracy and latency have **not been measured**. Windows CI subsequently built commit `dac750ae46d56a4c4cfc78ba62c370d6df2874b0` in Release with **0 warnings and 0 errors**, and **all 24 checks passed**, including native integration ([run](https://github.com/zayyan0708/OCRPrototype/actions/runs/35320684807)). An actual labeled Arabic regression corpus remains necessary before production use. No claim of perfect extraction or a specific latency is made.
 
 ## Primary references
 

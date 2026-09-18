@@ -22,7 +22,7 @@
                 <dt>Address</dt><dd dir="auto">@data.Address</dd>
                 <dt>National ID</dt><dd dir="ltr">@data.NationalId</dd>
                 <dt>Card ID</dt><dd dir="ltr">@data.CardId</dd>
-                <dt>Date of birth (from national ID)</dt><dd>@data.DateOfBirth?.ToString("yyyy-MM-dd")</dd>
+                <dt>Date of birth</dt><dd>@data.DateOfBirth?.ToString("yyyy-MM-dd")</dd>
             </dl>
         }
         <pre class="bg-light p-3" dir="ltr">@JsonSerializer.Serialize(result, OcrJsonContext.Default.OcrExtractionResult)</pre>
