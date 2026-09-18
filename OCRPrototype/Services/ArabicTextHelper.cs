@@ -19,12 +19,38 @@ public static class ArabicTextHelper
         if (string.IsNullOrWhiteSpace(text))
             return string.Empty;
 
-        string cleaned = NormalizeDigits(text.Trim());
+        string cleaned = text.Trim();
 
         if (ContainsArabic(cleaned))
             cleaned = FixReadingOrder(cleaned);
 
-        cleaned = Regex.Replace(cleaned, @"\s+", " ");
+        cleaned = Regex.Replace(
+            cleaned,
+            @"\s+",
+            " ");
+
+        /*
+         * Paddle sometimes reads the printed separator:
+         *
+         * مركز قلين - كفر الشيخ
+         *
+         * as:
+         *
+         * مركز قلين ٠ كفر الشيخ
+         *
+         * or:
+         *
+         * مركز قلين 0 كفر الشيخ
+         *
+         * Only change zero when it is an isolated character
+         * between two Arabic words.
+         *
+         * Real numbers such as "شارع 10" are not affected.
+         */
+        cleaned = Regex.Replace(
+            cleaned,
+            @"(?<=[\u0600-\u06FF])\s+[0٠]\s+(?=[\u0600-\u06FF])",
+            " - ");
 
         return cleaned.Trim();
     }
@@ -34,27 +60,37 @@ public static class ArabicTextHelper
         if (string.IsNullOrWhiteSpace(text))
             return string.Empty;
 
-        string cleaned = NormalizeDigits(text.Trim());
+        string cleaned =
+            NormalizeDigits(text.Trim());
 
-        cleaned = Regex.Replace(cleaned, @"\s+", " ");
+        cleaned = Regex.Replace(
+            cleaned,
+            @"\s+",
+            " ");
 
         return cleaned.Trim();
     }
 
     public static string NormalizeDigits(string text)
     {
-        var result = new StringBuilder(text.Length);
+        var result =
+            new StringBuilder(text.Length);
 
         foreach (char c in text)
         {
-            // Arabic-Indic digits: ٠١٢٣٤٥٦٧٨٩
-            if (c >= '\u0660' && c <= '\u0669')
+            // Arabic-Indic:
+            // ٠١٢٣٤٥٦٧٨٩
+            if (c >= '\u0660' &&
+                c <= '\u0669')
             {
                 result.Append(
                     (char)(c - '\u0660' + '0'));
             }
-            // Eastern Arabic/Persian digits: ۰۱۲۳۴۵۶۷۸۹
-            else if (c >= '\u06F0' && c <= '\u06F9')
+
+            // Persian/Eastern Arabic:
+            // ۰۱۲۳۴۵۶۷۸۹
+            else if (c >= '\u06F0' &&
+                     c <= '\u06F9')
             {
                 result.Append(
                     (char)(c - '\u06F0' + '0'));
@@ -73,8 +109,11 @@ public static class ArabicTextHelper
         if (string.IsNullOrWhiteSpace(text))
             return string.Empty;
 
-        var parts = new List<string>();
-        var current = new StringBuilder();
+        var parts =
+            new List<string>();
+
+        var current =
+            new StringBuilder();
 
         foreach (char c in text)
         {
@@ -86,20 +125,28 @@ public static class ArabicTextHelper
             {
                 if (current.Length > 0)
                 {
-                    parts.Add(current.ToString());
+                    parts.Add(
+                        current.ToString());
+
                     current.Clear();
                 }
 
-                parts.Add(c.ToString());
+                parts.Add(
+                    c.ToString());
             }
         }
 
         if (current.Length > 0)
-            parts.Add(current.ToString());
+        {
+            parts.Add(
+                current.ToString());
+        }
 
         parts.Reverse();
 
-        return string.Concat(parts).Trim();
+        return string
+            .Concat(parts)
+            .Trim();
     }
 
     private static bool IsLtrCharacter(char c)
