@@ -15,34 +15,27 @@ public class EgyptianIdOcrService : IEgyptianIdOcrService
         new(1000, 630);
 
     /*
-     * Broad personal-information region.
+     * Personal information area only.
      *
-     * Used mainly for address extraction.
+     * We deliberately start below the card heading.
+     *
+     * Expected order:
+     *
+     * First name
+     * Full name
+     * Address line 1
+     * Address line 2 (optional)
      */
     private static readonly Rect PersonalTextRegion =
-        new(420, 120, 580, 370);
+        new(330, 145, 670, 325);
 
     /*
-     * Separate name ROI.
-     *
-     * It intentionally covers both first-name and full-name
-     * lines and is larger than the exact text.
-     *
-     * We then select the first two Arabic lines from it.
-     *
-     * This prevents a missed first line from shifting all
-     * fields, which is what happened with sample 9.
+     * Smaller crop used only to recover a first name that the
+     * larger personal-information OCR may have missed.
      */
-    private static readonly Rect NameRegion =
-        new(500, 135, 500, 285);
+    private static readonly Rect FirstNameFallbackRegion =
+        new(400, 145, 600, 135);
 
-    /*
-     * Wider national-ID area.
-     *
-     * It reaches all the way to the right edge.
-     * The previous crop stopped slightly before the edge,
-     * which could lose the final digits.
-     */
     private static readonly Rect NationalIdRegion =
         new(330, 430, 670, 190);
 
@@ -54,6 +47,18 @@ public class EgyptianIdOcrService : IEgyptianIdOcrService
 
     private static readonly Rect PhotoRegion =
         new(10, 25, 320, 380);
+
+    /*
+     * Contains only Arabic letters.
+     *
+     * This prevents numeric OCR regions from becoming personal
+     * information simply because Arabic digits belong to the
+     * broader Arabic Unicode block.
+     */
+    private static readonly Regex ArabicLetterRegex =
+        new(
+            @"[\u0621-\u063A\u0641-\u064A]",
+            RegexOptions.Compiled);
 
     public EgyptianIdOcrService(
         PaddleOcrEngine engine,
@@ -87,6 +92,10 @@ public class EgyptianIdOcrService : IEgyptianIdOcrService
             };
         }
 
+        // =====================================================
+        // 1. IMAGE QUALITY
+        // =====================================================
+
         ImageQualityInfo quality =
             CheckImageQuality(original);
 
@@ -100,45 +109,15 @@ public class EgyptianIdOcrService : IEgyptianIdOcrService
             };
         }
 
-        /*
-         * Find/straighten the card when possible,
-         * otherwise normalize the complete image.
-         */
+        // =====================================================
+        // 2. NORMALIZE CARD
+        // =====================================================
+
         using Mat card =
             NormalizeCard(original);
 
         // =====================================================
-        // NAME
-        // =====================================================
-
-        string? firstName = null;
-        string? fullName = null;
-
-        using (Mat nameCrop =
-               SafeCrop(
-                   card,
-                   NameRegion))
-        {
-            List<string> nameLines =
-                await ReadArabicLinesAsync(
-                    nameCrop,
-                    enlarge: true,
-                    ct);
-
-            nameLines = nameLines
-                .Where(ArabicTextHelper.ContainsArabic)
-                .Where(line => !IsCardHeader(line))
-                .ToList();
-
-            if (nameLines.Count >= 1)
-                firstName = nameLines[0];
-
-            if (nameLines.Count >= 2)
-                fullName = nameLines[1];
-        }
-
-        // =====================================================
-        // COMPLETE PERSONAL AREA
+        // 3. PERSONAL INFORMATION
         // =====================================================
 
         List<string> personalLines;
@@ -155,68 +134,99 @@ public class EgyptianIdOcrService : IEgyptianIdOcrService
                     ct);
         }
 
-        personalLines = personalLines
-            .Where(ArabicTextHelper.ContainsArabic)
-            .Where(line => !IsCardHeader(line))
-            .ToList();
+        personalLines =
+            FilterPersonalLines(
+                personalLines);
 
         /*
-         * If the dedicated name crop failed, use the normal
-         * personal-area OCR as a fallback.
+         * Independently read the top part of the personal
+         * information area.
+         *
+         * This helps when Paddle sees:
+         *
+         * Full Name
+         * Address 1
+         * Address 2
+         *
+         * but misses the shorter First Name above them.
          */
-        if (string.IsNullOrWhiteSpace(firstName) &&
-            personalLines.Count > 0)
+        List<string> firstNameFallbackLines;
+
+        using (Mat firstNameCrop =
+               SafeCrop(
+                   card,
+                   FirstNameFallbackRegion))
         {
-            firstName =
-                personalLines[0];
+            firstNameFallbackLines =
+                await ReadArabicLinesAsync(
+                    firstNameCrop,
+                    enlarge: true,
+                    ct);
         }
 
-        if (string.IsNullOrWhiteSpace(fullName))
-        {
-            foreach (string line in personalLines)
-            {
-                if (!SameText(
-                        line,
-                        firstName))
-                {
-                    fullName = line;
-                    break;
-                }
-            }
-        }
+        firstNameFallbackLines =
+            FilterPersonalLines(
+                firstNameFallbackLines);
+
+        MergeFirstNameFallback(
+            personalLines,
+            firstNameFallbackLines);
 
         /*
-         * Address = all remaining personal lines after
-         * removing firstName/fullName.
+         * Personal data is mapped only according to relative
+         * top-to-bottom line order.
          *
-         * This avoids relying on:
+         * We do NOT use:
          *
-         * personalLines[2]
-         *
-         * which fails whenever Paddle misses one of the
-         * preceding lines.
+         * - hardcoded Arabic header text
+         * - RightX alignment
+         * - fixed Y position for FirstName
+         * - fixed Y position for FullName
          */
-        List<string> addressLines =
-            personalLines
-                .Where(line =>
-                    !SameText(
-                        line,
-                        firstName))
-                .Where(line =>
-                    !SameText(
-                        line,
-                        fullName))
-                .ToList();
 
-        string? address =
-            addressLines.Count > 0
-                ? string.Join(
-                    " ",
-                    addressLines)
+        string? firstName =
+            personalLines.Count >= 1
+                ? personalLines[0]
                 : null;
 
+        string? fullName =
+            personalLines.Count >= 2
+                ? personalLines[1]
+                : null;
+
+        /*
+         * The address can consist of one or more lines.
+         *
+         * Examples:
+         *
+         * line 1 -> FirstName
+         * line 2 -> FullName
+         * line 3 -> Address
+         *
+         * OR
+         *
+         * line 1 -> FirstName
+         * line 2 -> FullName
+         * line 3 -> Address line 1
+         * line 4 -> Address line 2
+         *
+         * Everything from line 3 onward is joined.
+         */
+        string? address =
+            personalLines.Count >= 3
+                ? string.Join(
+                    " ",
+                    personalLines.Skip(2))
+                : null;
+
+        _logger.LogInformation(
+            "PERSONAL LINES: {Lines}",
+            string.Join(
+                " | ",
+                personalLines));
+
         // =====================================================
-        // NATIONAL ID
+        // 4. NATIONAL ID
         // =====================================================
 
         string? nationalId = null;
@@ -233,7 +243,7 @@ public class EgyptianIdOcrService : IEgyptianIdOcrService
         }
 
         // =====================================================
-        // CARD ID
+        // 5. CARD ID
         // =====================================================
 
         string? cardId = null;
@@ -255,25 +265,19 @@ public class EgyptianIdOcrService : IEgyptianIdOcrService
         }
 
         // =====================================================
-        // DOB
+        // 6. DATE OF BIRTH
         // =====================================================
 
         /*
-         * National ID is the preferred source.
-         *
-         * Example:
-         *
-         * 2830406...
-         *
-         * => 1983-04-06
+         * Prefer DOB derived from the National ID.
          */
         string? dateOfBirth =
             GetDateOfBirthFromNationalId(
                 nationalId);
 
         /*
-         * Only OCR the printed date if we could not derive
-         * DOB from a complete national ID.
+         * If National ID did not provide a valid DOB,
+         * OCR the printed date as fallback.
          */
         if (dateOfBirth is null)
         {
@@ -294,11 +298,15 @@ public class EgyptianIdOcrService : IEgyptianIdOcrService
         }
 
         // =====================================================
-        // PHOTO
+        // 7. PHOTO
         // =====================================================
 
         string? photo =
             ExtractPhoto(card);
+
+        // =====================================================
+        // RESULT
+        // =====================================================
 
         var result =
             new EgyptianIdOcrResult
@@ -321,12 +329,250 @@ public class EgyptianIdOcrService : IEgyptianIdOcrService
             BuildWarning(result);
 
         _logger.LogInformation(
-            "ID OCR completed. Name={Name}, NationalId={NationalId}, CardId={CardId}",
+            "ID OCR completed. FirstName={FirstName}, FullName={FullName}, Address={Address}, NationalId={NationalId}, CardId={CardId}",
             result.FirstName,
+            result.FullName,
+            result.Address,
             result.NationalId,
             result.CardId);
 
         return result;
+    }
+
+    // =========================================================
+    // PERSONAL INFORMATION
+    // =========================================================
+
+    private async Task<List<string>> ReadArabicLinesAsync(
+        Mat crop,
+        bool enlarge,
+        CancellationToken ct)
+    {
+        if (crop.Empty())
+            return new List<string>();
+
+        using Mat prepared =
+            PrepareTextForOcr(
+                crop,
+                enlarge);
+
+        return await ReadPreparedLinesAsync(
+            prepared,
+            rightToLeft: true,
+            fixArabicDirection: true,
+            ct);
+    }
+
+    private static List<string> FilterPersonalLines(
+        IEnumerable<string> lines)
+    {
+        var result =
+            new List<string>();
+
+        foreach (string rawLine in lines)
+        {
+            if (string.IsNullOrWhiteSpace(
+                    rawLine))
+            {
+                continue;
+            }
+
+            string line =
+                Regex.Replace(
+                    rawLine.Trim(),
+                    @"\s+",
+                    " ");
+
+            /*
+             * Personal information must contain at least one
+             * actual Arabic letter.
+             */
+            if (!ContainsArabicLetter(line))
+                continue;
+
+            /*
+             * Avoid duplicated OCR lines.
+             */
+            bool duplicate =
+                result.Any(
+                    existing =>
+                        SameText(
+                            existing,
+                            line));
+
+            if (duplicate)
+                continue;
+
+            result.Add(line);
+        }
+
+        return result;
+    }
+
+    private static bool ContainsArabicLetter(
+        string text)
+    {
+        return
+            !string.IsNullOrWhiteSpace(text) &&
+            ArabicLetterRegex.IsMatch(text);
+    }
+
+    private static void MergeFirstNameFallback(
+        List<string> personalLines,
+        List<string> fallbackLines)
+    {
+        if (fallbackLines.Count == 0)
+            return;
+
+        string candidate =
+            fallbackLines[0];
+
+        if (string.IsNullOrWhiteSpace(
+                candidate))
+        {
+            return;
+        }
+
+        /*
+         * Main personal OCR found nothing.
+         */
+        if (personalLines.Count == 0)
+        {
+            personalLines.Add(
+                candidate);
+
+            return;
+        }
+
+        /*
+         * Main OCR already found this same first name.
+         */
+        if (SameText(
+                candidate,
+                personalLines[0]))
+        {
+            return;
+        }
+
+        /*
+         * The fallback crop can occasionally include part of
+         * the full-name line.
+         *
+         * Do not insert it if it is already one of the first
+         * two main OCR lines.
+         */
+        bool alreadyPresent =
+            personalLines
+                .Take(2)
+                .Any(
+                    line =>
+                        SameText(
+                            candidate,
+                            line));
+
+        if (alreadyPresent)
+            return;
+
+        /*
+         * The most likely explanation is that the main OCR
+         * missed the first-name line.
+         */
+        personalLines.Insert(
+            0,
+            candidate);
+    }
+
+    private static bool SameText(
+        string? first,
+        string? second)
+    {
+        if (string.IsNullOrWhiteSpace(first) ||
+            string.IsNullOrWhiteSpace(second))
+        {
+            return false;
+        }
+
+        string a =
+            NormalizeForComparison(
+                first);
+
+        string b =
+            NormalizeForComparison(
+                second);
+
+        if (a.Length == 0 ||
+            b.Length == 0)
+        {
+            return false;
+        }
+
+        if (a == b)
+            return true;
+
+        /*
+         * The same text can vary slightly between two OCR
+         * crops because of spacing or one small character.
+         */
+        if (a.Length >= 4 &&
+            b.Length >= 4)
+        {
+            if (a.Contains(b) ||
+                b.Contains(a))
+            {
+                double shorter =
+                    Math.Min(
+                        a.Length,
+                        b.Length);
+
+                double longer =
+                    Math.Max(
+                        a.Length,
+                        b.Length);
+
+                /*
+                 * Avoid treating a very short name fragment
+                 * as identical to a much longer full name.
+                 */
+                if (shorter / longer >= 0.60)
+                    return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static string NormalizeForComparison(
+        string value)
+    {
+        /*
+         * Normalize common Arabic forms only for comparison.
+         *
+         * The actual OCR value returned to the user remains
+         * untouched.
+         */
+        value = value
+            .Replace('أ', 'ا')
+            .Replace('إ', 'ا')
+            .Replace('آ', 'ا')
+            .Replace('ٱ', 'ا');
+
+        /*
+         * Remove Arabic diacritics for comparison.
+         */
+        value =
+            Regex.Replace(
+                value,
+                @"[\u064B-\u065F\u0670]",
+                "");
+
+        /*
+         * Ignore spaces and punctuation during comparison.
+         */
+        return new string(
+            value
+                .Where(
+                    char.IsLetterOrDigit)
+                .ToArray());
     }
 
     // =========================================================
@@ -374,6 +620,12 @@ public class EgyptianIdOcrService : IEgyptianIdOcrService
 
         string? message = null;
 
+        /*
+         * Do not reject based on aspect ratio.
+         *
+         * A square phone image can contain a perfectly
+         * readable ID card.
+         */
         if (image.Cols < 320 ||
             image.Rows < 180)
         {
@@ -421,7 +673,8 @@ public class EgyptianIdOcrService : IEgyptianIdOcrService
                     contrast,
                     2),
 
-            Message = message
+            Message =
+                message
         };
     }
 
@@ -433,8 +686,13 @@ public class EgyptianIdOcrService : IEgyptianIdOcrService
         Mat source)
     {
         using Mat oriented =
-            EnsureLandscape(source);
+            EnsureLandscape(
+                source);
 
+        /*
+         * Try to detect and perspective-correct the physical
+         * card first.
+         */
         if (TryFindCardCorners(
                 oriented,
                 out Point2f[] corners))
@@ -444,6 +702,10 @@ public class EgyptianIdOcrService : IEgyptianIdOcrService
                 corners);
         }
 
+        /*
+         * Some scans/photos contain only the card and therefore
+         * have no clear outer contour.
+         */
         var normalized =
             new Mat();
 
@@ -462,7 +724,7 @@ public class EgyptianIdOcrService : IEgyptianIdOcrService
         Mat image)
     {
         /*
-         * Square images stay unchanged.
+         * Landscape and square images stay unchanged.
          */
         if (image.Cols >=
             image.Rows)
@@ -554,6 +816,10 @@ public class EgyptianIdOcrService : IEgyptianIdOcrService
                 Cv2.ContourArea(
                     contour);
 
+            /*
+             * Ignore small objects such as text regions and
+             * the portrait.
+             */
             if (area <
                 imageArea * 0.20)
             {
@@ -605,12 +871,16 @@ public class EgyptianIdOcrService : IEgyptianIdOcrService
                     ordered[2]);
 
             double width =
-                (topWidth +
-                 bottomWidth) / 2.0;
+                (
+                    topWidth +
+                    bottomWidth
+                ) / 2.0;
 
             double height =
-                (leftHeight +
-                 rightHeight) / 2.0;
+                (
+                    leftHeight +
+                    rightHeight
+                ) / 2.0;
 
             if (width < 1 ||
                 height < 1)
@@ -626,6 +896,10 @@ public class EgyptianIdOcrService : IEgyptianIdOcrService
                     width,
                     height);
 
+            /*
+             * Keep this intentionally loose because a phone
+             * image can introduce perspective distortion.
+             */
             if (ratio < 1.25 ||
                 ratio > 2.10)
             {
@@ -646,34 +920,43 @@ public class EgyptianIdOcrService : IEgyptianIdOcrService
     {
         Point2f[] converted =
             points
-                .Select(point =>
-                    new Point2f(
-                        point.X,
-                        point.Y))
+                .Select(
+                    point =>
+                        new Point2f(
+                            point.X,
+                            point.Y))
                 .ToArray();
 
         Point2f topLeft =
             converted
-                .OrderBy(point =>
-                    point.X + point.Y)
+                .OrderBy(
+                    point =>
+                        point.X +
+                        point.Y)
                 .First();
 
         Point2f bottomRight =
             converted
-                .OrderByDescending(point =>
-                    point.X + point.Y)
+                .OrderByDescending(
+                    point =>
+                        point.X +
+                        point.Y)
                 .First();
 
         Point2f topRight =
             converted
-                .OrderByDescending(point =>
-                    point.X - point.Y)
+                .OrderByDescending(
+                    point =>
+                        point.X -
+                        point.Y)
                 .First();
 
         Point2f bottomLeft =
             converted
-                .OrderBy(point =>
-                    point.X - point.Y)
+                .OrderBy(
+                    point =>
+                        point.X -
+                        point.Y)
                 .First();
 
         return new[]
@@ -710,12 +993,16 @@ public class EgyptianIdOcrService : IEgyptianIdOcrService
                 corners[2]);
 
         double averageWidth =
-            (topWidth +
-             bottomWidth) / 2.0;
+            (
+                topWidth +
+                bottomWidth
+            ) / 2.0;
 
         double averageHeight =
-            (leftHeight +
-             rightHeight) / 2.0;
+            (
+                leftHeight +
+                rightHeight
+            ) / 2.0;
 
         bool landscape =
             averageWidth >=
@@ -825,10 +1112,12 @@ public class EgyptianIdOcrService : IEgyptianIdOcrService
                 image.Rows);
 
         int width =
-            right - x;
+            right -
+            x;
 
         int height =
-            bottom - y;
+            bottom -
+            y;
 
         if (width <= 0 ||
             height <= 0)
@@ -852,38 +1141,15 @@ public class EgyptianIdOcrService : IEgyptianIdOcrService
     }
 
     // =========================================================
-    // ARABIC OCR
+    // TEXT PREPROCESSING
     // =========================================================
-
-    private async Task<List<string>> ReadArabicLinesAsync(
-        Mat crop,
-        bool enlarge,
-        CancellationToken ct)
-    {
-        if (crop.Empty())
-            return new List<string>();
-
-        using Mat prepared =
-            PrepareTextForOcr(
-                crop,
-                enlarge);
-
-        return await ReadPreparedLinesAsync(
-            prepared,
-            rightToLeft: true,
-            fixArabicDirection: true,
-            ct);
-    }
 
     private static Mat PrepareTextForOcr(
         Mat source,
         bool enlarge)
     {
         /*
-         * Padding is important.
-         *
-         * Text sitting exactly on the right edge can otherwise
-         * be ignored by the OCR detector.
+         * Padding helps Paddle detect text near ROI edges.
          */
         using var padded =
             new Mat();
@@ -960,7 +1226,7 @@ public class EgyptianIdOcrService : IEgyptianIdOcrService
     }
 
     // =========================================================
-    // NATIONAL ID
+    // NATIONAL ID OCR
     // =========================================================
 
     private async Task<string?> ReadNationalIdAsync(
@@ -973,11 +1239,11 @@ public class EgyptianIdOcrService : IEgyptianIdOcrService
         string? bestResult =
             null;
 
-        /*
-         * PASS 1
-         *
-         * Enlarged original/color-like representation.
-         */
+        // -----------------------------------------------------
+        // PASS 1
+        // Contrast enhancement + enlargement
+        // -----------------------------------------------------
+
         using (Mat first =
                PrepareNumberForOcr(
                    crop))
@@ -1002,14 +1268,11 @@ public class EgyptianIdOcrService : IEgyptianIdOcrService
                     value);
         }
 
-        /*
-         * PASS 2
-         *
-         * Thresholded representation.
-         *
-         * Only run this if we did not already recover all
-         * 14 digits.
-         */
+        // -----------------------------------------------------
+        // PASS 2
+        // Binary image
+        // -----------------------------------------------------
+
         using (Mat second =
                PrepareBinaryNumberForOcr(
                    crop))
@@ -1034,14 +1297,11 @@ public class EgyptianIdOcrService : IEgyptianIdOcrService
                     value);
         }
 
-        /*
-         * PASS 3
-         *
-         * A simpler enlarged original version.
-         *
-         * Different preprocessing occasionally recovers digits
-         * that CLAHE/thresholding loses.
-         */
+        // -----------------------------------------------------
+        // PASS 3
+        // Simple enlarged image
+        // -----------------------------------------------------
+
         using (Mat third =
                PrepareSimpleNumberForOcr(
                    crop))
@@ -1073,14 +1333,20 @@ public class EgyptianIdOcrService : IEgyptianIdOcrService
         string? current,
         string? candidate)
     {
-        if (string.IsNullOrWhiteSpace(candidate))
+        if (string.IsNullOrWhiteSpace(
+                candidate))
+        {
             return current;
+        }
 
-        if (string.IsNullOrWhiteSpace(current))
+        if (string.IsNullOrWhiteSpace(
+                current))
+        {
             return candidate;
+        }
 
         /*
-         * Prefer more digits.
+         * Prefer the result containing more digits.
          */
         if (candidate.Length >
             current.Length)
@@ -1089,8 +1355,8 @@ public class EgyptianIdOcrService : IEgyptianIdOcrService
         }
 
         /*
-         * If both are complete, prefer one with a valid
-         * encoded date.
+         * When both contain 14 digits, prefer the candidate
+         * that contains a valid encoded date.
          */
         if (candidate.Length == 14 &&
             current.Length == 14)
@@ -1262,8 +1528,8 @@ public class EgyptianIdOcrService : IEgyptianIdOcrService
             new Mat();
 
         /*
-         * Extra right-side space is especially important for
-         * the last digits of the national ID.
+         * Extra right-side padding is useful for the final
+         * National ID digits.
          */
         Cv2.CopyMakeBorder(
             source,
@@ -1332,7 +1598,7 @@ public class EgyptianIdOcrService : IEgyptianIdOcrService
     }
 
     // =========================================================
-    // OCR RESULT GROUPING
+    // OCR LINE GROUPING
     // =========================================================
 
     private async Task<List<string>> ReadPreparedLinesAsync(
@@ -1359,8 +1625,11 @@ public class EgyptianIdOcrService : IEgyptianIdOcrService
                     : ArabicTextHelper.CleanBasic(
                         region.Text);
 
-            if (string.IsNullOrWhiteSpace(text))
+            if (string.IsNullOrWhiteSpace(
+                    text))
+            {
                 continue;
+            }
 
             pieces.Add(
                 new OcrPiece(
@@ -1372,12 +1641,22 @@ public class EgyptianIdOcrService : IEgyptianIdOcrService
         if (pieces.Count == 0)
             return new List<string>();
 
+        /*
+         * Sort detected text regions from top to bottom.
+         */
         pieces =
             pieces
-                .OrderBy(piece =>
-                    piece.Y)
+                .OrderBy(
+                    piece =>
+                        piece.Y)
                 .ToList();
 
+        /*
+         * Paddle can split a single printed line into multiple
+         * OCR regions.
+         *
+         * Group regions with approximately the same Y position.
+         */
         double lineTolerance =
             Math.Max(
                 10,
@@ -1395,17 +1674,19 @@ public class EgyptianIdOcrService : IEgyptianIdOcrService
             foreach (List<OcrPiece> row in
                      rows)
             {
-                double rowY =
+                double averageY =
                     row.Average(
                         item =>
                             item.Y);
 
                 if (Math.Abs(
-                        rowY -
+                        averageY -
                         piece.Y) <=
                     lineTolerance)
                 {
-                    rowMatch = row;
+                    rowMatch =
+                        row;
+
                     break;
                 }
             }
@@ -1433,14 +1714,22 @@ public class EgyptianIdOcrService : IEgyptianIdOcrService
                              item =>
                                  item.Y)))
         {
-            IEnumerable<OcrPiece> ordered =
-                rightToLeft
-                    ? row.OrderByDescending(
-                        item =>
-                            item.X)
-                    : row.OrderBy(
+            IEnumerable<OcrPiece> ordered;
+
+            if (rightToLeft)
+            {
+                ordered =
+                    row.OrderByDescending(
                         item =>
                             item.X);
+            }
+            else
+            {
+                ordered =
+                    row.OrderBy(
+                        item =>
+                            item.X);
+            }
 
             string line =
                 string.Join(
@@ -1458,8 +1747,7 @@ public class EgyptianIdOcrService : IEgyptianIdOcrService
 
             if (line.Length > 0)
             {
-                lines.Add(
-                    line);
+                lines.Add(line);
             }
         }
 
@@ -1470,97 +1758,13 @@ public class EgyptianIdOcrService : IEgyptianIdOcrService
         IEnumerable<string> lines)
     {
         return lines
-            .SelectMany(line =>
-                ArabicTextHelper
-                    .NormalizeDigits(line))
+            .SelectMany(
+                line =>
+                    ArabicTextHelper
+                        .NormalizeDigits(
+                            line))
             .Count(
                 char.IsDigit);
-    }
-
-    // =========================================================
-    // TEXT COMPARISON
-    // =========================================================
-
-    private static bool SameText(
-        string? first,
-        string? second)
-    {
-        if (string.IsNullOrWhiteSpace(first) ||
-            string.IsNullOrWhiteSpace(second))
-        {
-            return false;
-        }
-
-        string a =
-            NormalizeForComparison(
-                first);
-
-        string b =
-            NormalizeForComparison(
-                second);
-
-        if (a == b)
-            return true;
-
-        /*
-         * Two OCR passes over the same text may differ by a
-         * tiny character or space.
-         *
-         * This handles cases such as:
-         *
-         * "محمد إبراهيم علي"
-         *
-         * versus
-         *
-         * "محمدابراهيم علي"
-         */
-        if (a.Length >= 5 &&
-            b.Length >= 5)
-        {
-            if (a.Contains(b) ||
-                b.Contains(a))
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    private static string NormalizeForComparison(
-        string value)
-    {
-        return new string(
-            value
-                .Where(
-                    char.IsLetterOrDigit)
-                .ToArray());
-    }
-
-    // =========================================================
-    // HEADER FILTER
-    // =========================================================
-
-    private static bool IsCardHeader(
-        string text)
-    {
-        if (string.IsNullOrWhiteSpace(text))
-            return true;
-
-        bool republic =
-            text.Contains("جمهورية") &&
-            text.Contains("العربية");
-
-        bool card =
-            text.Contains("بطاقة") &&
-            (
-                text.Contains("الشخصية") ||
-                text.Contains("تحقيق") ||
-                text.Contains("قومي")
-            );
-
-        return republic ||
-               card;
     }
 
     // =========================================================
@@ -1574,7 +1778,7 @@ public class EgyptianIdOcrService : IEgyptianIdOcrService
             new List<string>();
 
         /*
-         * Look at individual OCR lines.
+         * Check every OCR line independently.
          */
         foreach (string line in
                  lines)
@@ -1598,14 +1802,15 @@ public class EgyptianIdOcrService : IEgyptianIdOcrService
         }
 
         /*
-         * Also join everything.
+         * Paddle can split the National ID into several
+         * different OCR regions.
          *
-         * Paddle sometimes splits a 14-digit ID into two
-         * separate OCR regions.
+         * Therefore also test all regions joined together.
          */
         string combined =
             PrepareNumericText(
-                string.Concat(lines));
+                string.Concat(
+                    lines));
 
         string combinedDigits =
             new(
@@ -1621,7 +1826,7 @@ public class EgyptianIdOcrService : IEgyptianIdOcrService
         }
 
         /*
-         * Exact 14-digit OCR result.
+         * Perfect result.
          */
         foreach (string candidate in
                  candidates)
@@ -1631,8 +1836,9 @@ public class EgyptianIdOcrService : IEgyptianIdOcrService
         }
 
         /*
-         * If OCR included extra digits/noise, search every
-         * 14-digit window.
+         * OCR may contain additional numeric noise.
+         *
+         * Search every possible 14-digit sequence.
          */
         foreach (string candidate in
                  candidates
@@ -1649,14 +1855,20 @@ public class EgyptianIdOcrService : IEgyptianIdOcrService
                         i,
                         14);
 
-                if (IsValidNationalId(part))
+                if (IsValidNationalId(
+                        part))
+                {
                     return part;
+                }
             }
         }
 
         /*
-         * Test/sample IDs may not encode a formally valid
-         * date. Still return the printed 14-digit value.
+         * Test/synthetic cards may contain a printed number
+         * which does not encode a valid DOB.
+         *
+         * Preserve the visible OCR result rather than
+         * discarding it.
          */
         foreach (string candidate in
                  candidates
@@ -1682,14 +1894,14 @@ public class EgyptianIdOcrService : IEgyptianIdOcrService
         }
 
         /*
-         * Partial OCR.
-         *
-         * Keep it instead of silently returning null.
+         * Return the longest useful partial result if Paddle
+         * failed to recover all 14 digits.
          */
         return candidates
-            .Where(value =>
-                value.Length >= 8 &&
-                value.Length < 14)
+            .Where(
+                value =>
+                    value.Length >= 8 &&
+                    value.Length < 14)
             .OrderByDescending(
                 value =>
                     value.Length)
@@ -1701,17 +1913,28 @@ public class EgyptianIdOcrService : IEgyptianIdOcrService
     {
         string value =
             ArabicTextHelper
-                .NormalizeDigits(text);
+                .NormalizeDigits(
+                    text);
 
         /*
-         * Conservative corrections only inside numeric ROIs.
+         * Conservative OCR fixes only inside numeric areas.
          */
         value = value
-            .Replace('O', '0')
-            .Replace('o', '0')
-            .Replace('I', '1')
-            .Replace('l', '1')
-            .Replace('|', '1');
+            .Replace(
+                'O',
+                '0')
+            .Replace(
+                'o',
+                '0')
+            .Replace(
+                'I',
+                '1')
+            .Replace(
+                'l',
+                '1')
+            .Replace(
+                '|',
+                '1');
 
         return value;
     }
@@ -1729,7 +1952,8 @@ public class EgyptianIdOcrService : IEgyptianIdOcrService
         }
 
         return
-            GetDateOfBirthFromNationalId(id)
+            GetDateOfBirthFromNationalId(
+                id)
             is not null;
     }
 
@@ -1749,11 +1973,13 @@ public class EgyptianIdOcrService : IEgyptianIdOcrService
 
         if (nationalId[0] == '2')
         {
-            century = 1900;
+            century =
+                1900;
         }
         else if (nationalId[0] == '3')
         {
-            century = 2000;
+            century =
+                2000;
         }
         else
         {
@@ -1791,7 +2017,8 @@ public class EgyptianIdOcrService : IEgyptianIdOcrService
         {
             DateTime date =
                 new(
-                    century + year,
+                    century +
+                    year,
                     month,
                     day);
 
@@ -1811,7 +2038,7 @@ public class EgyptianIdOcrService : IEgyptianIdOcrService
     }
 
     // =========================================================
-    // PRINTED DOB FALLBACK
+    // PRINTED DATE OF BIRTH FALLBACK
     // =========================================================
 
     private static string? ExtractPrintedDate(
@@ -1824,7 +2051,8 @@ public class EgyptianIdOcrService : IEgyptianIdOcrService
 
         value =
             ArabicTextHelper
-                .NormalizeDigits(value);
+                .NormalizeDigits(
+                    value);
 
         Match match =
             Regex.Match(
@@ -1892,7 +2120,8 @@ public class EgyptianIdOcrService : IEgyptianIdOcrService
 
         value =
             ArabicTextHelper
-                .NormalizeDigits(value);
+                .NormalizeDigits(
+                    value);
 
         value =
             Regex.Replace(
@@ -1900,6 +2129,12 @@ public class EgyptianIdOcrService : IEgyptianIdOcrService
                 @"\s+",
                 "");
 
+        /*
+         * Common modern format:
+         *
+         * HW5870214
+         * IG6434506
+         */
         Match alphaNumeric =
             Regex.Match(
                 value,
@@ -1908,6 +2143,9 @@ public class EgyptianIdOcrService : IEgyptianIdOcrService
         if (alphaNumeric.Success)
             return alphaNumeric.Value;
 
+        /*
+         * Some cards use numeric slash-separated codes.
+         */
         Match slash =
             Regex.Match(
                 value,
@@ -1958,7 +2196,7 @@ public class EgyptianIdOcrService : IEgyptianIdOcrService
     }
 
     // =========================================================
-    // WARNING
+    // RESULT WARNING
     // =========================================================
 
     private static string? BuildWarning(
@@ -2034,6 +2272,10 @@ public class EgyptianIdOcrService : IEgyptianIdOcrService
 
         return memory.ToArray();
     }
+
+    // =========================================================
+    // INTERNAL OCR TYPE
+    // =========================================================
 
     private sealed record OcrPiece(
         string Text,
